@@ -19,19 +19,21 @@
 #import "HTTPServer.h"
 #import "PacFileResponse.h"
 #import "SocksProxyServer.h"
-//#import "HTTPProxyServer.h"
+#if HTTP_PROXY_ENABLED
+#import "HTTPProxyServer.h"
+#endif
 #import "UIViewAdditions.h"
 #import "UIColorAdditions.h"
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <QuartzCore/QuartzCore.h>
-
+#import "UIDevice_Extended.h"
 #define OFTEN_UPDATE_PERIOD             0.5
 #define NOT_SO_OFTEN_UPDATE_PERIOD      2.0
 
 // defaults keys
 #define KEY_SOCKS_ON    @"socks.on"
 #define KEY_HTTP_ON     @"http.on"
-
+extern int fdEventNum;
 @interface MainViewController()
 - (void)updateHTTPProxy;
 - (void)updateSocksProxy;
@@ -131,9 +133,30 @@
 //    NSLog(@"%@ application: %@ window: %@ view: %@", NSStringFromSelector(_cmd), _applicationActive?@"active":@"not active", _windowVisible?@"visible":@"hidden", _viewVisible?@"visible":@"hidden");
 }
 
-- (void)viewWillAppear:(BOOL)animated
+-(void)setLabels
 {
 	NSString *hostName;
+    //hostName = [[NSProcessInfo processInfo] hostName];
+    hostName = [UIDevice localWiFiIPAddress];
+#if HTTP_PROXY_ENABLED
+    httpAddressLabel.text = [NSString stringWithFormat:@"%@:%d", hostName, [[HTTPProxyServer sharedServer] servicePort]];
+    httpPacLabel.text = [NSString stringWithFormat:@"http://%@:%d%@", hostName, [HTTPServer sharedHTTPServer].servicePort, [HTTPProxyServer pacFilePath]];
+#endif
+    
+    socksAddressLabel.text = [NSString stringWithFormat:@"%@:%d", hostName, [[SocksProxyServer sharedServer] servicePort]];
+    socksPacLabel.text = [NSString stringWithFormat:@"http://%@:%d%@", hostName, [HTTPServer sharedHTTPServer].servicePort, [SocksProxyServer pacFilePath]]; 
+    
+    proxyEventCountLabel.text = [NSString stringWithFormat:@"%d", fdEventNum];
+}
+- (void)scheduleLabelTimer
+{
+    if (!labelTimer) {
+        labelTimer = [NSTimer scheduledTimerWithTimeInterval:NOT_SO_OFTEN_UPDATE_PERIOD target:self selector:@selector(setLabels) userInfo:nil repeats:YES];
+    }
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
 	
 #if HTTP_PROXY_ENABLED
     httpSwitch.on = [[NSUserDefaults standardUserDefaults] boolForKey: KEY_HTTP_ON];
@@ -152,16 +175,8 @@
         (id)[[UIColor colorWithRGB:208, 180, 35] CGColor],
         nil];
     [self.view.layer insertSublayer:gradient atIndex:0];
-    
-    hostName = [[NSProcessInfo processInfo] hostName];
-    
-#if HTTP_PROXY_ENABLED
-    httpAddressLabel.text = [NSString stringWithFormat:@"%@:%d", hostName, [[HTTPProxyServer sharedServer] servicePort]];
-    httpPacLabel.text = [NSString stringWithFormat:@"http://%@:%d%@", hostName, [HTTPServer sharedHTTPServer].servicePort, [HTTPProxyServer pacFilePath]];
-#endif
-
-    socksAddressLabel.text = [NSString stringWithFormat:@"%@:%d", hostName, [[SocksProxyServer sharedServer] servicePort]];
-    socksPacLabel.text = [NSString stringWithFormat:@"http://%@:%d%@", hostName, [HTTPServer sharedHTTPServer].servicePort, [SocksProxyServer pacFilePath]];
+    [self setLabels];
+    [self scheduleLabelTimer];
     [self.view addTaggedSubview:runningView];
     [[SocksProxyServer sharedServer] addObserver:self forKeyPath:@"connectionCount" options:NSKeyValueObservingOptionNew context:nil];
 	
@@ -184,8 +199,14 @@
     _viewVisible = NO;
     [_updateTransferTimer invalidate];
     _updateTransferTimer = nil;
+    [socksProxyInfoTimer invalidate];
+    socksProxyInfoTimer = nil;
+    [labelTimer invalidate];
+    labelTimer = nil;
+
 //    NSLog(@"%@ application: %@ window: %@ view: %@", NSStringFromSelector(_cmd), _applicationActive?@"active":@"not active", _windowVisible?@"visible":@"hidden", _viewVisible?@"visible":@"hidden");
 }
+
 
 - (void)scheduleSocksProxyInfoTimer
 {
